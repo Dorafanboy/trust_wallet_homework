@@ -4,31 +4,22 @@
 [![GitHub issues](https://img.shields.io/github/issues/Dorafanboy/trust_wallet_homework.svg)](https://github.com/Dorafanboy/trust_wallet_homework/issues)
 [![GitHub contributors](https://img.shields.io/github/contributors/Dorafanboy/trust_wallet_homework.svg)](https://github.com/Dorafanboy/trust_wallet_homework/graphs/contributors)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](#) <!-- Replace with CI build status badge if available, e.g., GitHub Actions -->
-[![Go Report Card](https://goreportcard.com/badge/github.com/Dorafanboy/trust_wallet_homework)](https://goreportcard.com/report/github.com/Dorafanboy/trust_wallet_homework)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dorafanboy/trust_wallet_homework)](https://goreportcard.com/report/github.com/dorafanboy/trust_wallet_homework)
 [![Coverage Status](https://coveralls.io/repos/github/Dorafanboy/trust_wallet_homework/badge.svg?branch=main)](https://coveralls.io/github/Dorafanboy/trust_wallet_homework?branch=main)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-# Ethereum Blockchain Parser (trust_wallet_homework)
+# Ethereum Blockchain Parser
 
 ## Overview
 
 This project is an Ethereum blockchain parser designed to monitor new blocks, identify transactions for subscribed addresses (both incoming and outgoing), and provide a REST API to access this information. All parsed data is currently stored in memory.
 
-## Key Features
-
-- Fetches the current (last processed) block number.
-- Allows subscription to Ethereum addresses for transaction monitoring.
-- Retrieves a list of transactions (both incoming and outgoing) for subscribed addresses.
-- Implements a background polling mechanism to continuously scan for new Ethereum blocks.
-- Stores parser state and discovered transactions in-memory.
-- Provides a RESTful API for interaction.
-
 ## Tech Stack
 
-- Go (v1.21+)
+- Go (v1.24+)
 - Docker & Docker Compose
 - Makefile for build/task automation
-- Gin (for REST API)
+- net/http (for REST API, using standard library)
 - slog (for structured logging)
 - testify/assert & testify/require (for testing)
 - mockery (for mock generation)
@@ -36,7 +27,7 @@ This project is an Ethereum blockchain parser designed to monitor new blocks, id
 
 ## Prerequisites
 
-- Go (version 1.21 or later recommended)
+- Go (version 1.24 or later recommended)
 - Docker & Docker Compose (for containerized execution)
 - Make
 
@@ -162,7 +153,3 @@ The following REST API endpoints are available:
           }
         ]
         ```
-
-## Лицензия
-
-Этот проект лицензирован на условиях MIT License. См. файл `LICENSE` для более подробной информации (вам нужно будет создать этот файл).
