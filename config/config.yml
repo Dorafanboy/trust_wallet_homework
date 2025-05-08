@@ -1,5 +1,3 @@
-# Example Configuration for Ethereum Parser API
-
 server:
   port: ":8080" # HTTP server listen address (e.g., ":8080" or "localhost:8080")
 
