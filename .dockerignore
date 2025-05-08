@@ -1,0 +1,33 @@
+# Git files
+.git
+.gitignore
+
+# IDE files
+.idea
+*.iml
+
+# Local build artifacts
+parserapi
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dependency directory (if vendoring)
+vendor/
+
+# Log files
+*.log
+
+# Config files (example is copied in Dockerfile, actual might be mounted)
+# config.json
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+
+# Temp files
+*.tmp
+*.temp
+*.swp
+*.swo 

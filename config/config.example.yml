@@ -1,0 +1,15 @@
+# Example Configuration for Ethereum Parser API
+
+server:
+  port: ":8080" # HTTP server listen address (e.g., ":8080" or "localhost:8080")
+
+ethereum:
+  rpc_url: "https://cloudflare-eth.com" # Your Ethereum JSON-RPC node URL
+
+parser:
+  polling_interval_seconds: 15 # Interval in seconds for polling new blocks
+
+  # Block number to start scanning from if no previous state is found.
+  # -1 means start from the latest confirmed block.
+  #  0 or positive means start from that specific block (0 effectively means genesis if supported by RPC).
+  initial_scan_block_number: -1 
