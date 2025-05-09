@@ -42,7 +42,7 @@ docker-build: ## Build the Docker image
 
 docker-run: ## Run the application in a Docker container
 	@echo "Running Docker container..."
-	docker run --rm -p 8080:8080 --name $(BINARY_NAME)-instance $(BINARY_NAME):latest # Adjust port if needed
+	docker run --rm -p 8080:8080 --name $(BINARY_NAME)-instance $(BINARY_NAME):latest
 
 infra-up: ## Start the application using docker-compose
 	@echo "Starting docker-compose service..."
