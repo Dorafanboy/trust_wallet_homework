@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"trust_wallet_homework/internal/config"
+	"trust_wallet_homework/internal/logger"
 	"trust_wallet_homework/pkg/ethparser"
 )
 
@@ -30,23 +30,23 @@ var (
 type Server struct {
 	httpServer *http.Server
 	service    ethparser.Parser
-	logger     *slog.Logger
+	logger     logger.AppLogger
 	cfg        *config.Config
 }
 
 // NewServer creates a new instance of the REST API server.
-func NewServer(service ethparser.Parser, logger *slog.Logger, cfg *config.Config) (*Server, error) {
+func NewServer(service ethparser.Parser, appLogger logger.AppLogger, cfg *config.Config) (*Server, error) {
 	if service == nil {
 		return nil, ErrServiceIsNil
 	}
-	if logger == nil {
+	if appLogger == nil {
 		return nil, ErrLoggerIsNil
 	}
 	if cfg == nil {
 		return nil, ErrConfigIsNil
 	}
 
-	h, err := NewHTTPHandler(service, logger)
+	h, err := NewHTTPHandler(service, appLogger)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrHandlerInitFailed, err)
 	}
@@ -62,7 +62,7 @@ func NewServer(service ethparser.Parser, logger *slog.Logger, cfg *config.Config
 	return &Server{
 		httpServer: server,
 		service:    service,
-		logger:     logger,
+		logger:     appLogger,
 		cfg:        cfg,
 	}, nil
 }

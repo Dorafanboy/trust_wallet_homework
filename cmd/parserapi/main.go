@@ -18,6 +18,7 @@ import (
 	"trust_wallet_homework/internal/adapters/storage/memory"
 	"trust_wallet_homework/internal/config"
 	"trust_wallet_homework/internal/core/application"
+	applogger "trust_wallet_homework/internal/logger"
 	"trust_wallet_homework/pkg/ethparser"
 )
 
@@ -35,19 +36,21 @@ func main() {
 	logLevel := new(slog.LevelVar)
 	logLevel.Set(slog.LevelDebug)
 	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})
-	logger := slog.New(jsonHandler)
-	slog.SetDefault(logger)
+	slogLogger := slog.New(jsonHandler)
+	slog.SetDefault(slogLogger)
 
-	if err := run(cfg, logger, configFile); err != nil {
-		logger.Error("Application run failed", "error", err)
+	appLoggerInstance := applogger.NewSlogAdapter(slogLogger)
+
+	if err := run(cfg, appLoggerInstance, configFile); err != nil {
+		slogLogger.Error("Application run failed", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("Application shut down gracefully.")
+	slogLogger.Info("Application shut down gracefully.")
 }
 
 // run initializes and starts the application components.
-func run(cfg *config.Config, logger *slog.Logger, configFile *string) error {
+func run(cfg *config.Config, logger applogger.AppLogger, configFile *string) error {
 	logMsg := "Configuration loaded successfully"
 	if configFile != nil && *configFile != "" {
 		logger.Info(logMsg, "configFile", *configFile)
@@ -90,7 +93,7 @@ func run(cfg *config.Config, logger *slog.Logger, configFile *string) error {
 }
 
 // gracefulShutdown manages the startup of concurrent components and their graceful shutdown.
-func gracefulShutdown(logger *slog.Logger, parserService ethparser.Parser, apiServer *restapi.Server) error {
+func gracefulShutdown(logger applogger.AppLogger, parserService ethparser.Parser, apiServer *restapi.Server) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

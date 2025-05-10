@@ -11,6 +11,7 @@ import (
 	"trust_wallet_homework/internal/core/application/mocks/mock_client"
 	"trust_wallet_homework/internal/core/application/mocks/mock_repository"
 	"trust_wallet_homework/internal/core/domain"
+	applogger "trust_wallet_homework/internal/logger"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -99,7 +100,8 @@ func setupBasicService(t *testing.T) (
 	mockTxRepo := mock_repository.NewTransactionRepository(t)
 	mockEthClient := mock_client.NewEthereumClient(t)
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	testAppLogger := applogger.NewSlogAdapter(discardLogger)
 
 	cfg := application.Config{
 		PollingIntervalSeconds: 1,
@@ -111,7 +113,7 @@ func setupBasicService(t *testing.T) (
 		mockAddrRepo,
 		mockTxRepo,
 		mockEthClient,
-		logger,
+		testAppLogger,
 		cfg,
 	)
 	if err != nil {

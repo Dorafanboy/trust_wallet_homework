@@ -208,25 +208,25 @@ func mapRPCTransactionToDomain(
 ) (*domain.Transaction, error) {
 	hash, err := domain.NewTransactionHash(rpcTx.Hash)
 	if err != nil {
-		return nil, fmt.Errorf("invalid tx hash: %w", err)
+		return nil, fmt.Errorf("invalid tx hash '%s': %w", rpcTx.Hash, err)
 	}
 
 	from, err := domain.NewAddress(rpcTx.From)
 	if err != nil {
-		return nil, fmt.Errorf("invalid tx from address: %w", err)
+		return nil, fmt.Errorf("invalid tx from address '%s': %w", rpcTx.From, err)
 	}
 
 	var to domain.Address
 	if rpcTx.To != nil && *rpcTx.To != "" {
 		to, err = domain.NewAddress(*rpcTx.To)
 		if err != nil {
-			return nil, fmt.Errorf("invalid tx to address: %w", err)
+			return nil, fmt.Errorf("invalid tx to address '%s': %w", *rpcTx.To, err)
 		}
 	}
 
 	value, err := domain.NewWeiValue(rpcTx.Value)
 	if err != nil {
-		return nil, fmt.Errorf("invalid tx value: %w", err)
+		return nil, fmt.Errorf("invalid tx value '%s': %w", rpcTx.Value, err)
 	}
 
 	domainTx := domain.NewTransaction(hash, from, to, value, blockNum, blockTimestamp)

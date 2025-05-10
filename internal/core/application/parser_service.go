@@ -5,12 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"trust_wallet_homework/internal/core/domain"
 	"trust_wallet_homework/internal/core/domain/client"
 	"trust_wallet_homework/internal/core/domain/repository"
+	"trust_wallet_homework/internal/logger"
 	"trust_wallet_homework/pkg/ethparser"
 )
 
@@ -20,7 +20,7 @@ type ParserServiceImpl struct {
 	addressRepo repository.MonitoredAddressRepository
 	txRepo      repository.TransactionRepository
 	ethClient   client.EthereumClient
-	logger      *slog.Logger
+	logger      logger.AppLogger
 
 	pollingInterval                   time.Duration
 	initialScanBlockNumberConfigValue int64
@@ -46,10 +46,10 @@ func NewParserService(
 	addressRepo repository.MonitoredAddressRepository,
 	txRepo repository.TransactionRepository,
 	ethClient client.EthereumClient,
-	logger *slog.Logger,
+	appLogger logger.AppLogger,
 	cfg Config,
 ) (*ParserServiceImpl, error) {
-	if logger == nil {
+	if appLogger == nil {
 		return nil, fmt.Errorf("logger cannot be nil for ParserService")
 	}
 
@@ -61,7 +61,9 @@ func NewParserService(
 	if cfg.InitialScanBlockNumber >= 0 {
 		block, err := domain.NewBlockNumber(cfg.InitialScanBlockNumber)
 		if err != nil {
-			logger.Warn("Invalid non-negative InitialScanBlockNumber", "configValue", cfg.InitialScanBlockNumber, "error", err)
+			appLogger.Warn("Invalid non-negative InitialScanBlockNumber",
+				"configValue", cfg.InitialScanBlockNumber,
+				"error", err)
 			initialBlockForState, _ = domain.NewBlockNumber(0)
 		} else {
 			initialBlockForState = block
@@ -75,7 +77,7 @@ func NewParserService(
 		addressRepo:                       addressRepo,
 		txRepo:                            txRepo,
 		ethClient:                         ethClient,
-		logger:                            logger,
+		logger:                            appLogger,
 		pollingInterval:                   time.Duration(cfg.PollingIntervalSeconds) * time.Second,
 		initialScanBlockNumberConfigValue: cfg.InitialScanBlockNumber,
 		initialScanBlock:                  initialBlockForState,
@@ -100,7 +102,9 @@ func (s *ParserServiceImpl) Subscribe(ctx context.Context, addressString string)
 		return fmt.Errorf("address validation failed: %w", err)
 	}
 
+	loggerWithAddress := s.logger.With("address", address.String())
 	if err := s.addressRepo.Add(ctx, address); err != nil {
+		loggerWithAddress.Error("Failed to subscribe address in repository", "error", err)
 		return fmt.Errorf("failed to subscribe address in repository: %w", err)
 	}
 
@@ -118,9 +122,10 @@ func (s *ParserServiceImpl) GetTransactions(
 		return nil, fmt.Errorf("address validation failed: %w", err)
 	}
 
+	loggerWithAddress := s.logger.With("address", address.String())
 	domainTxs, err := s.txRepo.FindByAddress(ctx, address)
 	if err != nil {
-		s.logger.Error("Error fetching transactions for address", "address", address.String(), "error", err)
+		loggerWithAddress.Error("Error fetching transactions for address", "error", err)
 		return nil, fmt.Errorf("failed to get transactions from repository: %w", err)
 	}
 
@@ -176,7 +181,7 @@ func (s *ParserServiceImpl) Stop(ctx context.Context) (err error) {
 		s.logger.Info("Parser service stopped gracefully.")
 		return nil
 	case <-ctx.Done():
-		s.logger.Info("Parser service stop timed out.")
+		s.logger.Error("Parser service stop timed out.", "error", ctx.Err())
 		return ctx.Err()
 	}
 }
@@ -213,6 +218,7 @@ func (s *ParserServiceImpl) initializeStateIfRequired(ctx context.Context) (doma
 			s.logger.Info("InitialScanBlockNumber is -1, fetching latest block to determine starting point...")
 			latestBlockNum, latestErr := s.ethClient.GetLatestBlockNumber(ctx)
 			if latestErr != nil {
+				s.logger.Error("Failed to get latest block number for initial state", "error", latestErr)
 				return domain.BlockNumber{}, fmt.Errorf("failed to get latest block number for initial state: %w", latestErr)
 			}
 			currentParsedBlock = latestBlockNum
@@ -222,6 +228,7 @@ func (s *ParserServiceImpl) initializeStateIfRequired(ctx context.Context) (doma
 			s.logger.Info("Initial state to be set to configured block", "blockNumber", currentParsedBlock.Value())
 		}
 		if err := s.stateRepo.SetCurrentBlock(ctx, currentParsedBlock); err != nil {
+			s.logger.Error("Failed to set initial block state", "block", currentParsedBlock.Value(), "error", err)
 			return domain.BlockNumber{}, fmt.Errorf(
 				"failed to set initial block state to %d: %w",
 				currentParsedBlock.Value(),
@@ -231,6 +238,7 @@ func (s *ParserServiceImpl) initializeStateIfRequired(ctx context.Context) (doma
 		s.logger.Info("Initial state set to block", "blockNumber", currentParsedBlock.Value())
 		return currentParsedBlock, nil
 	} else if stateErr != nil {
+		s.logger.Error("Error getting current block from state", "error", stateErr)
 		return domain.BlockNumber{}, fmt.Errorf("error getting current block from state: %w", stateErr)
 	}
 
@@ -242,16 +250,23 @@ func (s *ParserServiceImpl) getScanRange(
 	ctx context.Context,
 	currentParsedBlock domain.BlockNumber,
 ) (start, end int64, scanNeeded bool, err error) {
+	logger := s.logger.With("currentParsedBlock", currentParsedBlock.Value())
 	latestBlock, fetchErr := s.ethClient.GetLatestBlockNumber(ctx)
 	if fetchErr != nil {
+		logger.Error("Error getting latest block number", "error", fetchErr)
 		return 0, 0, false, fmt.Errorf("error getting latest block number: %w", fetchErr)
 	}
 
 	start = currentParsedBlock.Value() + 1
 	end = latestBlock.Value()
 
+	if end > latestBlock.Value() {
+		end = latestBlock.Value()
+	}
+
 	if start > end {
-		return start, end, false, nil
+		logger.Info("No new blocks to scan", "latestBlockOnNode", latestBlock.Value())
+		return 0, 0, false, nil
 	}
 
 	return start, end, true, nil
@@ -263,46 +278,43 @@ func (s *ParserServiceImpl) processBlock(
 	blockNum domain.BlockNumber,
 	monitoredAddresses map[string]struct{},
 ) error {
-	s.logger.Info("Fetching block", "blockNumber", blockNum.Value())
+	logger := s.logger.With("blockNumber", blockNum.Value())
+	logger.Debug("Processing block")
 
-	block, fetchErr := s.ethClient.GetBlockWithTransactions(ctx, blockNum)
-	if fetchErr != nil {
-		s.logger.Error("Error getting block", "blockNumber", blockNum.Value(), "error", fetchErr)
-		return fmt.Errorf("failed to get block %d: %w", blockNum.Value(), fetchErr)
+	block, err := s.ethClient.GetBlockWithTransactions(ctx, blockNum)
+	if err != nil {
+		logger.Error("Failed to get block with transactions", "error", err)
+		return fmt.Errorf("failed to get block %d: %w", blockNum.Value(), err)
 	}
 
 	if block == nil {
-		s.logger.Warn("Block not found (nil response), stopping scan range.", "blockNumber", blockNum.Value())
-		return fmt.Errorf("block %d not found (nil response from RPC)", blockNum.Value())
+		logger.Warn("Received nil block, skipping")
+		return nil
 	}
 
-	foundRelevantTx := false
-	if len(monitoredAddresses) > 0 {
-		for _, tx := range block.Transactions {
-			_, fromMatch := monitoredAddresses[tx.From.String()]
-			_, toMatch := monitoredAddresses[tx.To.String()]
+	logger = logger.With("blockHash", block.Hash.String(), "txCount", len(block.Transactions))
+	foundTxs := 0
+	for _, tx := range block.Transactions {
+		storeTx := false
+		if _, ok := monitoredAddresses[tx.From.String()]; ok {
+			storeTx = true
+		}
+		if !tx.To.IsZero() {
+			if _, ok := monitoredAddresses[tx.To.String()]; ok {
+				storeTx = true
+			}
+		}
 
-			if fromMatch || toMatch {
-				foundRelevantTx = true
-				s.logger.Info("Found relevant transaction", "transactionHash", tx.Hash.String(), "blockNumber", blockNum.Value())
-				if err := s.txRepo.Store(ctx, tx); err != nil {
-					s.logger.Error("Error storing transaction",
-						"transactionHash", tx.Hash.String(),
-						"blockNumber", blockNum.Value(),
-						"error", err,
-					)
-				}
+		if storeTx {
+			if err := s.txRepo.Store(ctx, tx); err != nil {
+				logger.Error("Failed to store transaction", "txHash", tx.Hash.String(), "error", err)
+			} else {
+				foundTxs++
 			}
 		}
 	}
-
-	if err := s.stateRepo.SetCurrentBlock(ctx, blockNum); err != nil {
-		s.logger.Error("Error updating current block state to", "blockNumber", blockNum.Value(), "error", err)
-		return fmt.Errorf("failed to update block state for block %d: %w", blockNum.Value(), err)
-	}
-
-	if foundRelevantTx {
-		s.logger.Info("Finished processing block with relevant transactions", "blockNumber", blockNum.Value())
+	if foundTxs > 0 {
+		logger.Info("Stored transactions from block", "storedTxCount", foundTxs)
 	}
 
 	return nil
@@ -310,93 +322,86 @@ func (s *ParserServiceImpl) processBlock(
 
 // scanBlockRange performs a single scan iteration. It initializes state if needed,
 func (s *ParserServiceImpl) scanBlockRange() {
-	ctx := s.pollCtx
+	ctx, cancel := context.WithTimeout(s.pollCtx, s.pollingInterval-time.Second)
+	defer cancel()
+
+	logger := s.logger.With("method", "scanBlockRange")
+
+	logger.Info("Starting scan block range iteration.")
 
 	currentParsedBlock, err := s.initializeStateIfRequired(ctx)
 	if err != nil {
-		s.logger.Error("Failed to initialize or get parser state", "error", err)
+		logger.Error("Failed to initialize state or get current block", "error", err)
 		return
 	}
 
-	startScan, endScan, scanNeeded, err := s.getScanRange(ctx, currentParsedBlock)
+	logger = logger.With("currentParsedBlockFromState", currentParsedBlock.Value())
+
+	start, end, scanNeeded, err := s.getScanRange(ctx, currentParsedBlock)
 	if err != nil {
-		s.logger.Error("Failed to determine scan range", "error", err)
+		logger.Error("Failed to determine scan range", "error", err)
 		return
 	}
 
 	if !scanNeeded {
+		logger.Info("Scan not needed in this iteration.")
 		return
 	}
 
-	s.logger.Info("Scanning blocks from", "startScan", startScan, "endScan", endScan)
+	logger.Info("Scanning blocks", "from", start, "to", end)
 
-	monitoredAddressesDomain, err := s.addressRepo.FindAll(ctx)
+	monitoredAddressList, err := s.addressRepo.FindAll(ctx)
 	if err != nil {
-		s.logger.Error("Error getting monitored addresses", "error", err)
+		logger.Error("Failed to get monitored addresses", "error", err)
 		return
 	}
 
-	addressesMap := make(map[string]struct{}, len(monitoredAddressesDomain))
-	if len(monitoredAddressesDomain) > 0 {
-		for _, addr := range monitoredAddressesDomain {
-			addressesMap[addr.String()] = struct{}{}
-		}
-	} else {
-		s.logger.Info("No addresses subscribed, skipping transaction processing, will update state to latest block.")
-		latestBlockNum, err := domain.NewBlockNumber(endScan)
-		if err == nil {
-			if errState := s.stateRepo.SetCurrentBlock(ctx, latestBlockNum); errState != nil {
-				s.logger.Error("Error updating current block state to latest when no addresses monitored",
-					"blockNumber", endScan,
-					"error", errState,
-				)
-			}
-		} else {
-			s.logger.Error("Error creating block number from endScan", "endScan", endScan, "error", err)
-		}
-		return
+	monitoredAddressesMap := make(map[string]struct{}, len(monitoredAddressList))
+	for _, addr := range monitoredAddressList {
+		monitoredAddressesMap[addr.String()] = struct{}{}
 	}
 
-	var processingError error
-	var blockNumInt int64
+	if len(monitoredAddressesMap) == 0 {
+		logger.Info("No addresses are currently subscribed for monitoring. Skipping transaction processing until subscribed.")
+	}
 
-	for blockNumInt = startScan; blockNumInt <= endScan; blockNumInt++ {
+	lastSuccessfullyProcessedBlock := currentParsedBlock.Value()
+
+	for i := start; i <= end; i++ {
 		select {
 		case <-ctx.Done():
-			s.logger.Info("Block scanning interrupted by context cancellation.")
+			logger.Warn("Scan block range context done during block processing loop",
+				"lastProcessed", lastSuccessfullyProcessedBlock,
+				"error", ctx.Err())
+			finalBlockNum, _ := domain.NewBlockNumber(lastSuccessfullyProcessedBlock)
+			if updateErr := s.stateRepo.SetCurrentBlock(s.pollCtx, finalBlockNum); updateErr != nil {
+				logger.Error("Failed to update current block state on scan interruption",
+					"blockNumber", lastSuccessfullyProcessedBlock,
+					"error", updateErr)
+			}
 			return
 		default:
-		}
-
-		blockNum, errBlock := domain.NewBlockNumber(blockNumInt)
-		if errBlock != nil {
-			s.logger.Error("Invalid block number encountered during scan", "blockNumInt", blockNumInt, "error", errBlock)
-			processingError = fmt.Errorf("invalid block number %d: %w", blockNumInt, errBlock)
-			break
-		}
-
-		if err := s.processBlock(ctx, blockNum, addressesMap); err != nil {
-			processingError = err
-			break
+			blockNumToProcess, _ := domain.NewBlockNumber(i)
+			if err := s.processBlock(ctx, blockNumToProcess, monitoredAddressesMap); err != nil {
+				logger.Error("Failed to process block, stopping current scan iteration", "blockNumber", i, "error", err)
+				finalBlockNum, _ := domain.NewBlockNumber(lastSuccessfullyProcessedBlock)
+				if updateErr := s.stateRepo.SetCurrentBlock(s.pollCtx, finalBlockNum); updateErr != nil {
+					logger.Error("Failed to update current block state after processing error",
+						"blockNumber", lastSuccessfullyProcessedBlock,
+						"error", updateErr)
+				}
+				return
+			}
+			lastSuccessfullyProcessedBlock = i
 		}
 	}
 
-	if processingError != nil {
-		processedSuccessfullyUpTo := blockNumInt - 1
-		if blockNumInt == startScan {
-			processedSuccessfullyUpTo = startScan - 1
-		}
-		if processedSuccessfullyUpTo < 0 {
-			processedSuccessfullyUpTo = 0
-		}
-
-		s.logger.Error("Finished scanning block range with error",
-			"startScan", startScan,
-			"intendedEndScan", endScan,
-			"processedSuccessfullyUpTo", processedSuccessfullyUpTo,
-			"failedAtBlock", blockNumInt,
-			"error", processingError)
+	finalBlockNum, _ := domain.NewBlockNumber(lastSuccessfullyProcessedBlock)
+	if err := s.stateRepo.SetCurrentBlock(s.pollCtx, finalBlockNum); err != nil {
+		logger.Error("Failed to update current block state after scan range completion",
+			"blockNumber", lastSuccessfullyProcessedBlock,
+			"error", err)
 	} else {
-		s.logger.Info("Finished scanning block range successfully", "startScan", startScan, "endScan", endScan)
+		logger.Info("Successfully scanned and updated current block", "processedUpToBlock", lastSuccessfullyProcessedBlock)
 	}
 }

@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 	"strings"
 )
@@ -42,18 +43,73 @@ func (th TransactionHash) Equals(other TransactionHash) bool {
 	return th.value == other.value
 }
 
+// ErrInvalidWeiValueFormat indicates that the provided string is not a valid Wei value format.
+var ErrInvalidWeiValueFormat = errors.New("invalid wei value format")
+
 // WeiValue represents a transaction value, typically stored as a string
 type WeiValue struct {
-	value string
+	value *big.Int
 }
 
-// NewWeiValue creates a new WeiValue object.
-func NewWeiValue(value string) (WeiValue, error) {
-	cleanedValue := strings.TrimSpace(value)
-	return WeiValue{value: cleanedValue}, nil
+// NewWeiValue creates a new WeiValue object from a string.
+func NewWeiValue(s string) (WeiValue, error) {
+	trimmedStr := strings.TrimSpace(s)
+	if trimmedStr == "" {
+		return WeiValue{}, fmt.Errorf("%w: input string is empty", ErrInvalidWeiValueFormat)
+	}
+
+	val := new(big.Int)
+	var ok bool
+
+	if strings.HasPrefix(trimmedStr, "0x") || strings.HasPrefix(trimmedStr, "0X") {
+		if len(trimmedStr) == 2 {
+			return WeiValue{}, fmt.Errorf("%w: hex string is too short '%s'", ErrInvalidWeiValueFormat, trimmedStr)
+		}
+		_, ok = val.SetString(trimmedStr[2:], 16)
+	} else {
+		_, ok = val.SetString(trimmedStr, 10)
+	}
+
+	if !ok {
+		return WeiValue{}, fmt.Errorf("%w: failed to parse '%s'", ErrInvalidWeiValueFormat, trimmedStr)
+	}
+
+	return WeiValue{value: val}, nil
 }
 
-// String returns the string representation of the wei value.
+// String returns the string representation of the wei value in hex format ("0x...").
 func (wv WeiValue) String() string {
-	return wv.value
+	if wv.value == nil {
+		return "0x0"
+	}
+	return "0x" + wv.value.Text(16)
+}
+
+// BigInt returns a copy of the internal *big.Int value.
+func (wv WeiValue) BigInt() *big.Int {
+	if wv.value == nil {
+		return big.NewInt(0)
+	}
+	valCopy := new(big.Int)
+	valCopy.Set(wv.value)
+	return valCopy
+}
+
+// IsZero checks if the WeiValue represents zero.
+func (wv WeiValue) IsZero() bool {
+	if wv.value == nil {
+		return true
+	}
+	return wv.value.Sign() == 0
+}
+
+// Equals checks if two WeiValue objects are equal.
+func (wv WeiValue) Equals(other WeiValue) bool {
+	if wv.value == nil && other.value == nil {
+		return true
+	}
+	if wv.value == nil || other.value == nil {
+		return false
+	}
+	return wv.value.Cmp(other.value) == 0
 }

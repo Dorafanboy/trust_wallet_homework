@@ -34,7 +34,7 @@ func TestInMemoryTransactionRepo_Store_FindByAddress(t *testing.T) {
 
 	val1, err := domain.NewWeiValue("0x1")
 	require.NoError(t, err)
-	val2, err := domain.NewWeiValue("0x2")
+	val2, err := domain.NewWeiValue("2")
 	require.NoError(t, err)
 	val3, err := domain.NewWeiValue("0x3")
 	require.NoError(t, err)
