@@ -1,6 +1,4 @@
 # Use the official Golang image as a builder image.
-# Using alpine variant for smaller size.
-# Specify the Go version matching your project.
 FROM golang:1.24-alpine AS builder
 
 # Set the working directory inside the container.
@@ -23,7 +21,6 @@ FROM alpine:latest
 WORKDIR /app
 
 # Add a non-root user and switch to it.
-# Using numeric IDs is generally safer.
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
@@ -31,12 +28,10 @@ USER appuser
 COPY --from=builder /parserapi /app/parserapi
 
 # Copy the example configuration file into a config directory.
-# The actual config might be mounted via volume to /app/config/config.yml.
 COPY config/config.yml /app/config/config.yml
 
 # Expose the port the application listens on (matches default in config).
 EXPOSE 8080
 
 # Define the command to run the application.
-# The config file path is now within the config directory.
 CMD ["/app/parserapi", "-config=/app/config/config.yml"] 

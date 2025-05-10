@@ -19,9 +19,6 @@ vendor/
 # Log files
 *.log
 
-# Config files (example is copied in Dockerfile, actual might be mounted)
-# config.json
-
 # Docker files themselves
 Dockerfile
 docker-compose.yml
