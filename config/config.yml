@@ -10,7 +10,7 @@ logger:
   format: "text"                       # Logging format. Options: "json", "text"
 
 eth_client:
-  node_url: "http://localhost:8545"    # Your Ethereum JSON-RPC node URL
+  node_url: "https://ethereum-rpc.publicnode.com"    # Your Ethereum JSON-RPC node URL
   client_timeout_seconds: 20           # HTTP client timeout in seconds for ETH RPC calls
 
 app_service: # Configuration for the core application (parser) service

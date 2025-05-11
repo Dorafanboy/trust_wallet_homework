@@ -52,24 +52,45 @@ This project is an Ethereum blockchain parser designed to monitor new blocks, id
 
 ### Configuration
 
-The application uses a configuration file located at `config/config.yml`. Ensure this file is correctly set up before running the application. Key parameters include:
+The application uses a configuration file located at `config/config.yml`. Ensure this file is correctly set up before running the application. Below is a description of the key parameters found in `config/config.yml`:
 
--   `server.port`: Port for the API server (e.g., `":8080"`).
--   `ethereum.rpc_url`: URL of your Ethereum JSON-RPC provider.
--   `parser.polling_interval_seconds`: Interval in seconds for polling new blocks.
--   `parser.initial_scan_block_number`: Block number to start scanning from. Use `-1` to start from the latest block, or `0` or a positive number for a specific block.
+**`server`:** Configuration for the HTTP API server.
+-   `port`: HTTP server listen address (e.g., `":8080"` or `"localhost:8080"`).
+-   `read_timeout_seconds`: Max duration in seconds for reading the entire request, including the body.
+-   `write_timeout_seconds`: Max duration in seconds before timing out writes of the response.
+-   `idle_timeout_seconds`: Max amount of time in seconds to wait for the next request when keep-alives are enabled.
+-   `read_header_timeout_seconds`: Amount of time in seconds allowed to read request headers.
+
+**`logger`:** Configuration for application logging.
+-   `level`: Logging level. Options: `"debug"`, `"info"`, `"warn"`, `"error"`.
+-   `format`: Logging format. Options: `"json"`, `"text"`.
+
+**`eth_client`:** Configuration for the Ethereum JSON-RPC client.
+-   `node_url`: Your Ethereum JSON-RPC node URL (e.g., `"http://localhost:8545"`).
+-   `client_timeout_seconds`: HTTP client timeout in seconds for Ethereum RPC calls.
+
+**`app_service`:** Configuration for the core application (parser) service.
+-   `polling_interval_seconds`: Interval in seconds for polling new blocks from the Ethereum node.
 
 **Example `config/config.yml`:**
 ```yaml
 server:
   port: ":8080"
+  read_timeout_seconds: 15
+  write_timeout_seconds: 15
+  idle_timeout_seconds: 60
+  read_header_timeout_seconds: 30
 
-ethereum:
-  rpc_url: "https://cloudflare-eth.com" # Replace with your preferred RPC URL
+logger:
+  level: "info"
+  format: "text"
 
-parser:
-  polling_interval_seconds: 15
-  initial_scan_block_number: -1 # Start from the latest block
+eth_client:
+  node_url: "http://localhost:8545"
+  client_timeout_seconds: 20
+
+app_service:
+  polling_interval_seconds: 10
 ```
 
 ### Local Execution
