@@ -15,7 +15,6 @@ import (
 	applogger "trust_wallet_homework/internal/logger"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 )
 
 func TestParserServiceImpl_GetCurrentBlock(t *testing.T) {
@@ -101,10 +100,6 @@ func setupBasicService(t *testing.T) (
 	mockAddrRepo := mock_repository.NewMonitoredAddressRepository(t)
 	mockTxRepo := mock_repository.NewTransactionRepository(t)
 	mockEthClient := mock_client.NewEthereumClient(t)
-
-	initialBlockNumForSetup, _ := domain.NewBlockNumber(0)
-	mockEthClient.On("GetLatestBlockNumber", context.Background()).Return(initialBlockNumForSetup, nil)
-	mockStateRepo.On("SetCurrentBlock", context.Background(), mock.AnythingOfType("domain.BlockNumber")).Return(nil)
 
 	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	testAppLogger := applogger.NewSlogAdapter(discardLogger)
