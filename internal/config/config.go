@@ -4,107 +4,61 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Default values.
-const (
-	DefaultConfigFile        = "config/config.yml"
-	DefaultServerPort        = ":8080"
-	DefaultEthereumRPCURL    = "https://cloudflare-eth.com"
-	DefaultParserPollingInt  = 15
-	DefaultParserInitialScan = -1
-)
-
-// ServerConfig holds server-related configuration.
-type ServerConfig struct {
-	Port string `yaml:"port"`
-}
-
-// EthereumConfig holds Ethereum client-related configuration.
-type EthereumConfig struct {
-	RPCURL string `yaml:"rpc_url"`
-}
-
-// ParserConfig holds parser-specific configuration.
-type ParserConfig struct {
-	PollingIntervalSeconds int   `yaml:"polling_interval_seconds"`
-	InitialScanBlockNumber int64 `yaml:"initial_scan_block_number"`
-}
-
-// Config holds the application configuration.
-type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Ethereum EthereumConfig `yaml:"ethereum"`
-	Parser   ParserConfig   `yaml:"parser"`
-}
-
-// LoadConfig loads the configuration from a YAML file.
+// LoadConfig loads configuration from a YAML file, falling back to defaults.
 func LoadConfig(filePath string) (*Config, error) {
-	cfg := &Config{
+	cfg := Config{
 		Server: ServerConfig{
-			Port: DefaultServerPort,
+			Port:                     DefaultServerPort,
+			ReadTimeoutSeconds:       DefaultServerReadTimeoutSeconds,
+			WriteTimeoutSeconds:      DefaultServerWriteTimeoutSeconds,
+			IdleTimeoutSeconds:       DefaultServerIdleTimeoutSeconds,
+			ReadHeaderTimeoutSeconds: DefaultServerReadHeaderTimeoutSeconds,
 		},
-		Ethereum: EthereumConfig{
-			RPCURL: DefaultEthereumRPCURL,
+		Logger: LoggerConfig{
+			Level:  DefaultLoggerLevel,
+			Format: DefaultLoggerFormat,
 		},
-		Parser: ParserConfig{
-			PollingIntervalSeconds: DefaultParserPollingInt,
-			InitialScanBlockNumber: DefaultParserInitialScan,
+		ETHClient: ETHClientConfig{
+			NodeURL:              DefaultEthNodeURL,
+			ClientTimeoutSeconds: DefaultEthClientTimeoutSeconds,
+		},
+		AppService: ApplicationServiceConfig{
+			PollingIntervalSeconds: DefaultAppServicePollingIntervalSeconds,
+			InitialScanBlockNumber: DefaultAppServiceInitialScanBlockNumber,
 		},
 	}
 
-	loadPath := filePath
-	if loadPath == "" {
-		loadPath = DefaultConfigFile
-	}
-
-	fileBytes, err := os.ReadFile(loadPath)
+	fileBytes, err := os.ReadFile(filePath)
 	if err != nil {
-		if os.IsNotExist(err) && (filePath == "" || filePath == DefaultConfigFile) {
-			fmt.Printf("Config file '%s' not found, using default values for all sections.\n", loadPath)
-			return cfg, nil
+		if os.IsNotExist(err) {
+			fmt.Printf("Info: Config file '%s' not found, using default values for all settings.\n", filePath)
+			if validationErr := cfg.Validate(); validationErr != nil {
+				return nil, fmt.Errorf("default configuration validation failed: %w", validationErr)
+			}
+			return &cfg, nil
 		}
-		return nil, fmt.Errorf("failed to read config file '%s': %w", loadPath, err)
+		return nil, fmt.Errorf("failed to read config file '%s': %w", filePath, err)
 	}
 
-	type partialConfig struct {
-		Server   *ServerConfig   `yaml:"server"`
-		Ethereum *EthereumConfig `yaml:"ethereum"`
-		Parser   *ParserConfig   `yaml:"parser"`
-	}
-	var pCfg partialConfig
-
-	if err := yaml.Unmarshal(fileBytes, &pCfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file '%s': %w", loadPath, err)
+	if err := yaml.Unmarshal(fileBytes, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse YAML config file '%s': %w", filePath, err)
 	}
 
-	if pCfg.Server != nil {
-		if pCfg.Server.Port != "" {
-			cfg.Server.Port = pCfg.Server.Port
-		}
-	}
-	if pCfg.Ethereum != nil {
-		if pCfg.Ethereum.RPCURL != "" {
-			cfg.Ethereum.RPCURL = pCfg.Ethereum.RPCURL
-		}
-	}
-	if pCfg.Parser != nil {
-		cfg.Parser.PollingIntervalSeconds = pCfg.Parser.PollingIntervalSeconds
-		cfg.Parser.InitialScanBlockNumber = pCfg.Parser.InitialScanBlockNumber
-		if cfg.Parser.PollingIntervalSeconds <= 0 {
-			cfg.Parser.PollingIntervalSeconds = DefaultParserPollingInt
-		}
-	}
-
-	if cfg.Server.Port == "" {
+	if cfg.Server.Port != "" && !strings.HasPrefix(cfg.Server.Port, ":") {
+		cfg.Server.Port = ":" + cfg.Server.Port
+	} else if cfg.Server.Port == "" {
 		cfg.Server.Port = DefaultServerPort
 	}
-	if cfg.Ethereum.RPCURL == "" {
-		cfg.Ethereum.RPCURL = DefaultEthereumRPCURL
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("loaded configuration validation failed: %w", err)
 	}
 
-	fmt.Printf("Configuration loaded from '%s'\n", loadPath)
-	return cfg, nil
+	fmt.Printf("Info: Configuration successfully loaded from '%s'.\n", filePath)
+	return &cfg, nil
 }

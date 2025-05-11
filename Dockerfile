@@ -30,7 +30,7 @@ COPY --from=builder /parserapi /app/parserapi
 # Copy the example configuration file into a config directory.
 COPY config/config.yml /app/config/config.yml
 
-# Expose the port the application listens on (matches default in config).
+# Expose the port the application listens on.
 EXPOSE 8080
 
 # Define the command to run the application.

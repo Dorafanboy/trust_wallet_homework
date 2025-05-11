@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"trust_wallet_homework/internal/core/domain"
@@ -34,7 +33,7 @@ func NewHTTPHandler(parserService ethparser.Parser, appLogger logger.AppLogger) 
 
 // HandleGetCurrentBlock handles requests to GET /current_block
 func (h *HTTPHandler) HandleGetCurrentBlock(w http.ResponseWriter, r *http.Request) {
-	requestLogger := h.logger.With("method", r.Method, "path", r.URL.Path)
+	requestLogger := h.getRequestLogger(r)
 
 	if r.Method != http.MethodGet {
 		requestLogger.Warn("Method not allowed for GetCurrentBlock")
@@ -54,7 +53,7 @@ func (h *HTTPHandler) HandleGetCurrentBlock(w http.ResponseWriter, r *http.Reque
 
 // HandleSubscribe handles requests to POST /subscribe
 func (h *HTTPHandler) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
-	requestLogger := h.logger.With("method", r.Method, "path", r.URL.Path)
+	requestLogger := h.getRequestLogger(r)
 
 	if r.Method != http.MethodPost {
 		requestLogger.Warn("Method not allowed for Subscribe")
@@ -80,21 +79,19 @@ func (h *HTTPHandler) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requestLogger = requestLogger.With("address", req.Address)
-
 	err := h.parserService.Subscribe(r.Context(), req.Address)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidAddressFormat) {
-			requestLogger.Warn("Subscribe validation failed", "error", err)
+			requestLogger.Warn("Subscribe validation failed", "address", req.Address, "error", err)
 			respondWithError(w, http.StatusBadRequest, err.Error(), requestLogger)
 		} else {
-			requestLogger.Error("Error subscribing address", "error", err)
+			requestLogger.Error("Error subscribing address", "address", req.Address, "error", err)
 			respondWithError(w, http.StatusInternalServerError, "Failed to subscribe address", requestLogger)
 		}
 		return
 	}
 
-	requestLogger.Info("Address subscribed successfully")
+	requestLogger.Info("Address subscribed successfully", "address", req.Address)
 	respondWithJSON(w, http.StatusOK, SubscribeResponse{
 		Success: true,
 		Message: "Address subscribed successfully",
@@ -103,16 +100,16 @@ func (h *HTTPHandler) HandleSubscribe(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetTransactions handles requests to GET /transactions/{address}
 func (h *HTTPHandler) HandleGetTransactions(w http.ResponseWriter, r *http.Request) {
-	requestLogger := h.logger.With("method", r.Method, "path", r.URL.Path)
+	requestLogger := h.getRequestLogger(r)
+	address := r.PathValue("address")
+
+	requestLogger = requestLogger.With("address_param", address)
 
 	if r.Method != http.MethodGet {
 		requestLogger.Warn("Method not allowed for GetTransactions")
 		respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed", requestLogger)
 		return
 	}
-
-	address := r.PathValue("address")
-	requestLogger = requestLogger.With("address", address)
 
 	if address == "" {
 		requestLogger.Warn("Empty address in GetTransactions URL path")
@@ -137,30 +134,23 @@ func (h *HTTPHandler) HandleGetTransactions(w http.ResponseWriter, r *http.Reque
 	respondWithJSON(w, http.StatusOK, txs, requestLogger)
 }
 
+// getRequestLogger is a helper to create a request-specific logger with contextual information.
+func (h *HTTPHandler) getRequestLogger(r *http.Request) logger.AppLogger {
+	return h.logger.With(
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
+}
+
 // respondWithError logs a warning and sends a JSON error response with the given code and message.
 func respondWithError(w http.ResponseWriter, code int, message string, l logger.AppLogger) {
-	if l == nil {
-		serviceLogger := logger.NewSlogAdapter(slog.Default())
-		serviceLogger.Warn("Responding with error (fallback logger)", "http_code", code, "message", message)
-	} else {
-		l.Warn("Responding with error", "http_code", code, "message", message)
-	}
+	l.Warn("Responding with error", "http_code", code, "message", message)
 	respondWithJSON(w, code, ErrorResponse{Error: message}, l)
 }
 
 // respondWithJSON marshals the given payload into JSON and writes it to the response writer.
 func respondWithJSON(w http.ResponseWriter, code int, payload interface{}, l logger.AppLogger) {
-	if l == nil {
-		serviceLogger := logger.NewSlogAdapter(slog.Default())
-		serviceLogger.Error("!!! Critical: Error marshaling JSON response (fallback logger) !!!",
-			"payload_type", fmt.Sprintf("%T", payload),
-		)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"Failed to marshal response"}`))
-		return
-	}
-
 	response, err := json.Marshal(payload)
 	if err != nil {
 		l.Error("!!! Critical: Error marshaling JSON response !!!",
@@ -174,7 +164,6 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}, l log
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-
 	w.WriteHeader(code)
 
 	n, writeErr := w.Write(response)

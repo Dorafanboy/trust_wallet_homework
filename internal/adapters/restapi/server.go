@@ -12,58 +12,45 @@ import (
 	"trust_wallet_homework/pkg/ethparser"
 )
 
-var (
-	// ErrServiceIsNil indicates that a nil parser service was provided during server initialization.
-	ErrServiceIsNil = errors.New("service cannot be nil for Server")
-
-	// ErrLoggerIsNil indicates that a nil logger was provided during server initialization.
-	ErrLoggerIsNil = errors.New("logger cannot be nil for Server")
-
-	// ErrConfigIsNil indicates that a nil config was provided during server initialization.
-	ErrConfigIsNil = errors.New("config cannot be nil for Server")
-
-	// ErrHandlerInitFailed indicates that the HTTP handler dependency failed to initialize.
-	ErrHandlerInitFailed = errors.New("failed to initialize handler")
-)
-
 // Server wraps the HTTP server and its dependencies.
 type Server struct {
 	httpServer *http.Server
 	service    ethparser.Parser
 	logger     logger.AppLogger
-	cfg        *config.Config
 }
 
 // NewServer creates a new instance of the REST API server.
-func NewServer(service ethparser.Parser, appLogger logger.AppLogger, cfg *config.Config) (*Server, error) {
+func NewServer(service ethparser.Parser, appLogger logger.AppLogger, cfg *config.ServerConfig) (*Server, error) {
 	if service == nil {
-		return nil, ErrServiceIsNil
+		return nil, errors.New("service cannot be nil for Server")
 	}
 	if appLogger == nil {
-		return nil, ErrLoggerIsNil
+		return nil, errors.New("logger cannot be nil for Server")
 	}
 	if cfg == nil {
-		return nil, ErrConfigIsNil
+		return nil, errors.New("config cannot be nil for Server")
 	}
 
 	h, err := NewHTTPHandler(service, appLogger)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrHandlerInitFailed, err)
+		return nil, fmt.Errorf("failed to initialize handler: %w", err)
 	}
 
-	smux := setupRouter(h)
+	smux := setupRouter(h, cfg.Port)
 
 	server := &http.Server{
-		Addr:              cfg.Server.Port,
+		Addr:              cfg.Port,
 		Handler:           smux,
-		ReadHeaderTimeout: 30 * time.Second,
+		ReadTimeout:       time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       time.Duration(cfg.IdleTimeoutSeconds) * time.Second,
+		ReadHeaderTimeout: time.Duration(cfg.ReadHeaderTimeoutSeconds) * time.Second,
 	}
 
 	return &Server{
 		httpServer: server,
 		service:    service,
 		logger:     appLogger,
-		cfg:        cfg,
 	}, nil
 }
 
@@ -89,12 +76,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // setupRouter creates a new ServeMux and registers all API handlers.
-func setupRouter(h *HTTPHandler) *http.ServeMux {
+func setupRouter(h *HTTPHandler, port string) *http.ServeMux {
 	smux := http.NewServeMux()
 
 	smux.HandleFunc("/current_block", h.HandleGetCurrentBlock)
 	smux.HandleFunc("/subscribe", h.HandleSubscribe)
 	smux.HandleFunc("/transactions/{address}", h.HandleGetTransactions)
+
+	h.logger.Info("-------------------------------------")
+	h.logger.Info("API Server starting", "address", port)
+	h.logger.Info("Available Endpoints:")
+	h.logger.Info("  GET  /current_block")
+	h.logger.Info("  POST /subscribe       (Body: {'address':'0x...'})")
+	h.logger.Info("  GET  /transactions/{address}")
+	h.logger.Info("-------------------------------------")
 
 	return smux
 }

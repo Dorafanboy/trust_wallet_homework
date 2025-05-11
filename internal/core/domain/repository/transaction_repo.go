@@ -1,3 +1,6 @@
+// Package repository defines interfaces for data storage and retrieval operations.
+//
+//go:generate mockgen -source=$GOFILE -destination=../../mocks/mock_$GOPACKAGE/mock_$GOFILE -package=mock_$GOPACKAGE
 package repository
 
 import (

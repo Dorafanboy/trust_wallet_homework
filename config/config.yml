@@ -1,13 +1,21 @@
 server:
-  port: ":8080" # HTTP server listen address (e.g., ":8080" or "localhost:8080")
+  port: ":8080"                      # HTTP server listen address (e.g., ":8080" or "localhost:8080")
+  read_timeout_seconds: 15           # Max duration for reading the entire request, including the body
+  write_timeout_seconds: 15          # Max duration before timing out writes of the response
+  idle_timeout_seconds: 60           # Max amount of time to wait for the next request when keep-alives are enabled
+  read_header_timeout_seconds: 30    # Amount of time allowed to read request headers
 
-ethereum:
-  rpc_url: "https://cloudflare-eth.com" # Your Ethereum JSON-RPC node URL
+logger:
+  level: "info"                        # Logging level. Options: "debug", "info", "warn", "error"
+  format: "text"                       # Logging format. Options: "json", "text"
 
-parser:
-  polling_interval_seconds: 15 # Interval in seconds for polling new blocks
+eth_client:
+  node_url: "http://localhost:8545"    # Your Ethereum JSON-RPC node URL
+  client_timeout_seconds: 20           # HTTP client timeout in seconds for ETH RPC calls
 
-  # Block number to start scanning from if no previous state is found.
-  # -1 means start from the latest confirmed block.
-  #  0 or positive means start from that specific block (0 effectively means genesis if supported by RPC).
-  initial_scan_block_number: -1 
+app_service: # Configuration for the core application (parser) service
+  polling_interval_seconds: 10       # Interval in seconds for polling new blocks from the Ethereum node
+  initial_scan_from_block: -1        # Block number to start scanning from. 
+                                     # -1: From latest known block in DB, or latest network block if DB is empty.
+                                     #  0: From genesis block (block 0).
+                                     # >0: From a specific block number.
