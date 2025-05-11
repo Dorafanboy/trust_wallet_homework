@@ -98,7 +98,6 @@ func (c *Config) Validate() error {
 	if c.ETHClient.NodeURL == "" {
 		return errors.New("eth_client.node_url: cannot be empty")
 	}
-
 	if c.ETHClient.ClientTimeoutSeconds <= 0 {
 		return errors.New("eth_client.client_timeout_seconds must be > 0")
 	}

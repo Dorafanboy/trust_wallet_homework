@@ -8,8 +8,13 @@ import (
 	"strings"
 )
 
-// ErrInvalidTransactionHashFormat indicates invalid transaction hash format.
-var ErrInvalidTransactionHashFormat = errors.New("invalid transaction hash format")
+var (
+	// ErrInvalidTransactionHashFormat indicates invalid transaction hash format.
+	ErrInvalidTransactionHashFormat = errors.New("invalid transaction hash format")
+
+	// ErrInvalidWeiValueFormat indicates that the provided string is not a valid Wei value format.
+	ErrInvalidWeiValueFormat = errors.New("invalid wei value format")
+)
 
 // Basic regex for Transaction Hash format validation (0x followed by 64 hex characters).
 var ethTxHashRegex = regexp.MustCompile("^0x[0-9a-fA-F]{64}$")
@@ -42,9 +47,6 @@ func (th TransactionHash) IsZero() bool {
 func (th TransactionHash) Equals(other TransactionHash) bool {
 	return th.value == other.value
 }
-
-// ErrInvalidWeiValueFormat indicates that the provided string is not a valid Wei value format.
-var ErrInvalidWeiValueFormat = errors.New("invalid wei value format")
 
 // WeiValue represents a transaction value, typically stored as a string
 type WeiValue struct {
