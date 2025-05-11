@@ -39,6 +39,12 @@ This project is an Ethereum blockchain parser designed to monitor new blocks, id
     cd trust_wallet_homework
     ```
 
+    After cloning the repository and navigating into the project directory, it's recommended to ensure your Go modules are tidy. This synchronizes the dependencies in your `go.mod` file with the source code. Run:
+    ```bash
+    go mod tidy
+    ```
+    This step is especially important if you plan to make changes to the code or if you encounter any dependency-related issues during the build.
+
 2.  **Build the application:**
     ```bash
     make build
