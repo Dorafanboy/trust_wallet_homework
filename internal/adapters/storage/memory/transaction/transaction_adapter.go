@@ -1,4 +1,5 @@
-package memory
+// Package transaction provides an in-memory implementation of the TransactionRepository interface.
+package transaction
 
 import (
 	"context"

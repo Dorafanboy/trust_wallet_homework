@@ -1,10 +1,10 @@
-package memory_test
+package transaction_test
 
 import (
 	"context"
 	"testing"
+	"trust_wallet_homework/internal/adapters/storage/memory/transaction"
 
-	"trust_wallet_homework/internal/adapters/storage/memory"
 	"trust_wallet_homework/internal/core/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestInMemoryTransactionRepo_Store_FindByAddress(t *testing.T) {
-	repo := memory.NewInMemoryTransactionRepo()
+	repo := transaction.NewInMemoryTransactionRepo()
 	ctx := context.Background()
 
 	addr1Str := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

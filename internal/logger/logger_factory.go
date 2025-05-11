@@ -1,4 +1,3 @@
-// Package logger defines a generic logging interface for the application.
 package logger
 
 import (

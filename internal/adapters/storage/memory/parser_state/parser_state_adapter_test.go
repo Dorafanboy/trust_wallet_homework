@@ -1,11 +1,11 @@
-package memory_test
+package parser_state_test
 
 import (
 	"context"
 	"errors"
 	"testing"
+	"trust_wallet_homework/internal/adapters/storage/memory/parser_state"
 
-	"trust_wallet_homework/internal/adapters/storage/memory"
 	"trust_wallet_homework/internal/core/domain"
 	"trust_wallet_homework/internal/core/domain/repository"
 
@@ -14,7 +14,7 @@ import (
 )
 
 func TestInMemoryParserStateRepo_GetSetCurrentBlock(t *testing.T) {
-	repo := memory.NewInMemoryParserStateRepo()
+	repo := parser_state.NewInMemoryParserStateRepo()
 	ctx := context.Background()
 
 	_, err := repo.GetCurrentBlock(ctx)

@@ -11,10 +11,12 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"trust_wallet_homework/internal/adapters/storage/memory/address"
+	"trust_wallet_homework/internal/adapters/storage/memory/parser_state"
+	"trust_wallet_homework/internal/adapters/storage/memory/transaction"
 
 	"trust_wallet_homework/internal/adapters/restapi"
 	"trust_wallet_homework/internal/adapters/rpc"
-	"trust_wallet_homework/internal/adapters/storage/memory"
 	"trust_wallet_homework/internal/config"
 	"trust_wallet_homework/internal/core/application"
 	applogger "trust_wallet_homework/internal/logger"
@@ -55,9 +57,9 @@ func run(cfg *config.Config, logger applogger.AppLogger) error {
 
 	ethNodeClient := rpc.NewEthereumNodeAdapter(cfg.ETHClient.NodeURL, httpClient)
 
-	stateRepo := memory.NewInMemoryParserStateRepo()
-	addrRepo := memory.NewInMemoryAddressRepo()
-	txRepo := memory.NewInMemoryTransactionRepo()
+	stateRepo := parser_state.NewInMemoryParserStateRepo()
+	addrRepo := address.NewInMemoryAddressRepo()
+	txRepo := transaction.NewInMemoryTransactionRepo()
 
 	parserService, err := application.NewParserService(
 		stateRepo,

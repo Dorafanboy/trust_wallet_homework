@@ -1,4 +1,5 @@
-package memory
+// Package parser_state provides an in-memory implementation of the ParserStateRepository interface.
+package parser_state
 
 import (
 	"context"

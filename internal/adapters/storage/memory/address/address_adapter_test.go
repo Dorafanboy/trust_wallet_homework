@@ -1,10 +1,10 @@
-package memory_test
+package address_test
 
 import (
 	"context"
 	"testing"
+	"trust_wallet_homework/internal/adapters/storage/memory/address"
 
-	"trust_wallet_homework/internal/adapters/storage/memory"
 	"trust_wallet_homework/internal/core/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestInMemoryAddressRepo_AddExistsFindAll(t *testing.T) {
-	repo := memory.NewInMemoryAddressRepo()
+	repo := address.NewInMemoryAddressRepo()
 	ctx := context.Background()
 
 	addr1Str := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

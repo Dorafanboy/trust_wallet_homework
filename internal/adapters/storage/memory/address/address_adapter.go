@@ -1,5 +1,5 @@
-// Package memory provides in-memory implementations of repository interfaces for data storage.
-package memory
+// Package address provides an in-memory implementation of the MonitoredAddressRepository interface.
+package address
 
 import (
 	"context"
