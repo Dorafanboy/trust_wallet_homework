@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -84,54 +83,41 @@ type ApplicationServiceConfig struct {
 // Validate checks if the configuration values are valid.
 func (c *Config) Validate() error {
 	if c.Server.Port == "" || (strings.HasPrefix(c.Server.Port, ":") && len(c.Server.Port) == 1) {
-		return errors.New("server port (config key: server.port) cannot be empty or just ':'")
+		return errors.New("server.port: invalid port string")
 	}
 
-	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
-	if !validLogLevels[strings.ToLower(string(c.Logger.Level))] {
-		return fmt.Errorf(
-			"invalid logger level (config key: logger.level): '%s', must be one of: debug, info, warn, error",
-			c.Logger.Level,
-		)
+	validLogLevels := map[LogLevel]bool{LogLevelDebug: true, LogLevelInfo: true, LogLevelWarn: true, LogLevelError: true}
+	if !validLogLevels[(c.Logger.Level)] {
+		return fmt.Errorf("logger.level: '%s' is invalid; must be one of: debug, info, warn, error", c.Logger.Level)
 	}
-	validFormats := map[string]bool{"json": true, "text": true}
-	if !validFormats[strings.ToLower(string(c.Logger.Format))] {
-		return fmt.Errorf(
-			"invalid logger format (config key: logger.format): '%s', must be one of: json, text",
-			c.Logger.Format,
-		)
+	validFormats := map[LogFormat]bool{LogFormatJSON: true, LogFormatText: true}
+	if !validFormats[c.Logger.Format] {
+		return fmt.Errorf("logger.format: '%s' is invalid; must be one of: json, text", c.Logger.Format)
 	}
 
 	if c.ETHClient.NodeURL == "" {
-		return errors.New("ethereum node URL (config key: eth_client.node_url) cannot be empty")
-	}
-	if strings.HasPrefix(c.ETHClient.NodeURL, "/") || strings.HasPrefix(c.ETHClient.NodeURL, "\\\\.\\pipe\\") {
-		if _, err := os.Stat(c.ETHClient.NodeURL); os.IsNotExist(err) {
-			fmt.Printf("Warning: ETHClient.NodeURL ('%s') appears to be a local path but was not found.\n", c.ETHClient.NodeURL)
-		}
+		return errors.New("eth_client.node_url: cannot be empty")
 	}
 
 	if c.ETHClient.ClientTimeoutSeconds <= 0 {
-		return errors.New("ethereum client timeout seconds (config key: eth_client.client_timeout_seconds) must be greater than 0")
+		return errors.New("eth_client.client_timeout_seconds must be > 0")
 	}
 
 	if c.Server.ReadTimeoutSeconds < 0 {
-		return errors.New("server read timeout seconds (config key: server.read_timeout_seconds) cannot be negative")
+		return errors.New("server.read_timeout_seconds cannot be negative")
 	}
 	if c.Server.WriteTimeoutSeconds < 0 {
-		return errors.New("server write timeout seconds (config key: server.write_timeout_seconds) cannot be negative")
+		return errors.New("server.write_timeout_seconds cannot be negative")
 	}
 	if c.Server.IdleTimeoutSeconds < 0 {
-		return errors.New("server idle timeout seconds (config key: server.idle_timeout_seconds) cannot be negative")
+		return errors.New("server.idle_timeout_seconds cannot be negative")
 	}
 	if c.Server.ReadHeaderTimeoutSeconds < 0 {
-		return errors.New(
-			"server read header timeout seconds (config key: server.read_header_timeout_seconds) cannot be negative",
-		)
+		return errors.New("server.read_header_timeout_seconds cannot be negative")
 	}
 
 	if c.AppService.PollingIntervalSeconds <= 0 {
-		return errors.New("polling interval seconds (config key: app_service.polling_interval_seconds) must be greater than 0")
+		return errors.New("app_service.polling_interval_seconds must be > 0")
 	}
 
 	return nil

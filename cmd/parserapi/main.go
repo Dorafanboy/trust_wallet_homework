@@ -136,8 +136,6 @@ func gracefulShutdown(
 		}
 	})
 
-	logger.Info("Application services started via errgroup. Waiting for OS signal or critical error...")
-
 	waitErr := g.Wait()
 
 	if waitErr != nil {
@@ -146,11 +144,8 @@ func gracefulShutdown(
 		} else {
 			logger.Error("A service within errgroup failed", "error", waitErr)
 		}
-	} else {
-		logger.Info("All services in errgroup completed without error.")
 	}
 
-	logger.Info("Attempting to stop parser service (post g.Wait)...")
 	parserShutdownCtx, cancelParserShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelParserShutdown()
 	if err := parserService.Stop(parserShutdownCtx); err != nil {
@@ -162,8 +157,6 @@ func gracefulShutdown(
 				waitErr = fmt.Errorf("parser service stop failed (%w) after initial error (%w)", err, waitErr)
 			}
 		}
-	} else {
-		logger.Info("Parser service stopped successfully (post g.Wait).")
 	}
 
 	if errors.Is(waitErr, context.Canceled) {
