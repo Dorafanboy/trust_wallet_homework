@@ -9,19 +9,16 @@ import (
 
 // Default config values.
 const (
-	DefaultServerPort                     = ":8080"
-	DefaultLoggerLevel                    = LogLevelInfo
-	DefaultLoggerFormat                   = LogFormatJSON
-	DefaultEthNodeURL                     = "http://localhost:8545"
-	DefaultServerReadTimeoutSeconds       = 30
-	DefaultServerWriteTimeoutSeconds      = 30
-	DefaultServerIdleTimeoutSeconds       = 60
-	DefaultServerReadHeaderTimeoutSeconds = 30
-	DefaultEthClientTimeoutSeconds        = 20
-	DefaultConfigFilePath                 = "config.yml"
-	// Defaults for ApplicationServiceConfig
-	DefaultAppServicePollingIntervalSeconds = 10 // Example, align with your logic
-	DefaultAppServiceInitialScanBlockNumber = -1 // Example, -1 for latest
+	DefaultServerPort                       = ":8080"
+	DefaultLoggerLevel                      = LogLevelInfo
+	DefaultLoggerFormat                     = LogFormatJSON
+	DefaultEthNodeURL                       = "http://localhost:8545"
+	DefaultServerReadTimeoutSeconds         = 30
+	DefaultServerWriteTimeoutSeconds        = 30
+	DefaultServerIdleTimeoutSeconds         = 60
+	DefaultServerReadHeaderTimeoutSeconds   = 30
+	DefaultEthClientTimeoutSeconds          = 20
+	DefaultAppServicePollingIntervalSeconds = 10
 )
 
 // LogLevel defines the type for logger levels.
@@ -81,8 +78,7 @@ type ApplicationConfig struct {
 
 // ApplicationServiceConfig holds configuration for the core application service (parser).
 type ApplicationServiceConfig struct {
-	PollingIntervalSeconds int   `yaml:"polling_interval_seconds"`
-	InitialScanBlockNumber int64 `yaml:"initial_scan_from_block"`
+	PollingIntervalSeconds int `yaml:"polling_interval_seconds"`
 }
 
 // Validate checks if the configuration values are valid.
@@ -134,13 +130,8 @@ func (c *Config) Validate() error {
 		)
 	}
 
-	// Validate AppServiceConfig
 	if c.AppService.PollingIntervalSeconds <= 0 {
 		return errors.New("polling interval seconds (config key: app_service.polling_interval_seconds) must be greater than 0")
-	}
-	// InitialScanBlockNumber can be -1, 0 or >0. Other negative values are not allowed.
-	if c.AppService.InitialScanBlockNumber < -1 {
-		return errors.New("initial scan from block (config key: app_service.initial_scan_from_block) cannot be less than -1")
 	}
 
 	return nil

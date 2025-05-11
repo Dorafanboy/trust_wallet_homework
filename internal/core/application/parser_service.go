@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"trust_wallet_homework/internal/config"
 	"trust_wallet_homework/internal/core/domain"
 	"trust_wallet_homework/internal/core/domain/client"
 	"trust_wallet_homework/internal/core/domain/repository"
@@ -22,9 +23,8 @@ type ParserServiceImpl struct {
 	ethClient   client.EthereumClient
 	logger      logger.AppLogger
 
-	pollingInterval                   time.Duration
-	initialScanBlockNumberConfigValue int64
-	initialScanBlock                  domain.BlockNumber
+	pollingInterval time.Duration
+	lastKnownBlock  domain.BlockNumber
 
 	pollCtx    context.Context
 	pollCancel context.CancelFunc
@@ -37,7 +37,6 @@ var _ ethparser.Parser = (*ParserServiceImpl)(nil)
 // Config holds configuration needed by the ParserService.
 type Config struct {
 	PollingIntervalSeconds int
-	InitialScanBlockNumber int64
 }
 
 // NewParserService creates a new instance of ParserServiceImpl.
@@ -47,43 +46,57 @@ func NewParserService(
 	txRepo repository.TransactionRepository,
 	ethClient client.EthereumClient,
 	appLogger logger.AppLogger,
-	cfg Config,
-) (*ParserServiceImpl, error) {
+	appCfg config.ApplicationServiceConfig,
+) (ethparser.Parser, error) {
+	// Check for nil dependencies individually, starting with logger.
 	if appLogger == nil {
-		return nil, fmt.Errorf("logger cannot be nil for ParserService")
+		// Cannot log if logger itself is nil, so just return error.
+		return nil, errors.New("NewParserService: appLogger is nil")
+	}
+	if stateRepo == nil {
+		appLogger.Error("NewParserService: stateRepo is nil") // Log using the now-confirmed non-nil appLogger
+		return nil, errors.New("NewParserService: stateRepo is nil")
+	}
+	if addressRepo == nil {
+		appLogger.Error("NewParserService: addressRepo is nil")
+		return nil, errors.New("NewParserService: addressRepo is nil")
+	}
+	if txRepo == nil {
+		appLogger.Error("NewParserService: txRepo is nil")
+		return nil, errors.New("NewParserService: txRepo is nil")
+	}
+	if ethClient == nil {
+		appLogger.Error("NewParserService: ethClient is nil")
+		return nil, errors.New("NewParserService: ethClient is nil")
 	}
 
-	if cfg.PollingIntervalSeconds <= 0 {
-		cfg.PollingIntervalSeconds = 15
+	sInstance := &ParserServiceImpl{
+		stateRepo:       stateRepo,
+		addressRepo:     addressRepo,
+		txRepo:          txRepo,
+		ethClient:       ethClient,
+		pollingInterval: time.Duration(appCfg.PollingIntervalSeconds) * time.Second,
 	}
 
-	var initialBlockForState domain.BlockNumber
-	if cfg.InitialScanBlockNumber >= 0 {
-		block, err := domain.NewBlockNumber(cfg.InitialScanBlockNumber)
-		if err != nil {
-			appLogger.Warn("Invalid non-negative InitialScanBlockNumber",
-				"configValue", cfg.InitialScanBlockNumber,
-				"error", err)
-			initialBlockForState, _ = domain.NewBlockNumber(0)
-		} else {
-			initialBlockForState = block
-		}
+	// Simplified logic: always start from the latest network block.
+	sInstance.logger.Info("Attempting to fetch latest block from network to determine starting point...")
+	latestNetBlock, errNet := sInstance.ethClient.GetLatestBlockNumber(context.Background())
+	if errNet != nil {
+		sInstance.logger.Error("Failed to fetch latest block number from network", "error", errNet, "defaultingToBlock", 0)
+		sInstance.lastKnownBlock, _ = domain.NewBlockNumber(0)
 	} else {
-		initialBlockForState, _ = domain.NewBlockNumber(0)
+		sInstance.lastKnownBlock = latestNetBlock
+		sInstance.logger.Info("Starting scan from latest network block", "blockNumber", sInstance.lastKnownBlock.Value())
 	}
 
-	s := &ParserServiceImpl{
-		stateRepo:                         stateRepo,
-		addressRepo:                       addressRepo,
-		txRepo:                            txRepo,
-		ethClient:                         ethClient,
-		logger:                            appLogger,
-		pollingInterval:                   time.Duration(cfg.PollingIntervalSeconds) * time.Second,
-		initialScanBlockNumberConfigValue: cfg.InitialScanBlockNumber,
-		initialScanBlock:                  initialBlockForState,
+	ctxForInitialSet := context.Background() // Use a new context for this operation
+	if errSet := sInstance.stateRepo.SetCurrentBlock(ctxForInitialSet, sInstance.lastKnownBlock); errSet != nil {
+		sInstance.logger.Error("Failed to set initial parser state in repository", "error", errSet, "blockNumber", sInstance.lastKnownBlock.Value())
+	} else {
+		sInstance.logger.Info("Initial parser state set in repository", "blockNumber", sInstance.lastKnownBlock.Value())
 	}
 
-	return s, nil
+	return sInstance, nil
 }
 
 // GetCurrentBlock returns the number of the last successfully parsed block.
@@ -194,55 +207,25 @@ func (s *ParserServiceImpl) pollBlocks() {
 
 	s.logger.Info("Polling loop started.")
 
-	s.scanBlockRange()
+	// Initial scan on startup, using the already initialized s.lastKnownBlock from NewParserService.
+	// s.lastKnownBlock is now set directly in NewParserService and reflects the latest network block (or 0).
+	s.scanBlockRange(s.lastKnownBlock) // Pass s.lastKnownBlock directly
 
 	for {
 		select {
 		case <-ticker.C:
-			s.scanBlockRange()
+			// Subsequent scans will use the updated s.lastKnownBlock from stateRepo after each successful scanBlockRange
+			currentBlockFromState, err := s.stateRepo.GetCurrentBlock(s.pollCtx) // Use s.pollCtx here
+			if err != nil {
+				s.logger.Error("Failed to get current block from state before polling tick scan", "error", err)
+				continue // Skip this tick if we can't get state
+			}
+			s.scanBlockRange(currentBlockFromState)
 		case <-s.pollCtx.Done():
 			s.logger.Info("Polling loop stopping due to context cancellation.")
 			return
 		}
 	}
-}
-
-// initializeStateIfRequired checks if the parser state is initialized in the repository.
-func (s *ParserServiceImpl) initializeStateIfRequired(ctx context.Context) (domain.BlockNumber, error) {
-	currentParsedBlock, stateErr := s.stateRepo.GetCurrentBlock(ctx)
-
-	if stateErr != nil && errors.Is(stateErr, repository.ErrStateNotInitialized) {
-		s.logger.Info("State not initialized", "error", stateErr)
-
-		if s.initialScanBlockNumberConfigValue == -1 {
-			s.logger.Info("InitialScanBlockNumber is -1, fetching latest block to determine starting point...")
-			latestBlockNum, latestErr := s.ethClient.GetLatestBlockNumber(ctx)
-			if latestErr != nil {
-				s.logger.Error("Failed to get latest block number for initial state", "error", latestErr)
-				return domain.BlockNumber{}, fmt.Errorf("failed to get latest block number for initial state: %w", latestErr)
-			}
-			currentParsedBlock = latestBlockNum
-			s.logger.Info("Initial state to be set to latest block", "blockNumber", currentParsedBlock.Value())
-		} else {
-			currentParsedBlock = s.initialScanBlock
-			s.logger.Info("Initial state to be set to configured block", "blockNumber", currentParsedBlock.Value())
-		}
-		if err := s.stateRepo.SetCurrentBlock(ctx, currentParsedBlock); err != nil {
-			s.logger.Error("Failed to set initial block state", "block", currentParsedBlock.Value(), "error", err)
-			return domain.BlockNumber{}, fmt.Errorf(
-				"failed to set initial block state to %d: %w",
-				currentParsedBlock.Value(),
-				err,
-			)
-		}
-		s.logger.Info("Initial state set to block", "blockNumber", currentParsedBlock.Value())
-		return currentParsedBlock, nil
-	} else if stateErr != nil {
-		s.logger.Error("Error getting current block from state", "error", stateErr)
-		return domain.BlockNumber{}, fmt.Errorf("error getting current block from state: %w", stateErr)
-	}
-
-	return currentParsedBlock, nil
 }
 
 // getScanRange determines the block range to scan in the current iteration.
@@ -260,7 +243,7 @@ func (s *ParserServiceImpl) getScanRange(
 	start = currentParsedBlock.Value() + 1
 	end = latestBlock.Value()
 
-	if end > latestBlock.Value() {
+	if end > latestBlock.Value() { // This check is redundant as end is already latestBlock.Value()
 		end = latestBlock.Value()
 	}
 
@@ -320,8 +303,8 @@ func (s *ParserServiceImpl) processBlock(
 	return nil
 }
 
-// scanBlockRange performs a single scan iteration. It initializes state if needed,
-func (s *ParserServiceImpl) scanBlockRange() {
+// scanBlockRange performs a single scan iteration.
+func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNumber) { // Accepts current block as parameter
 	ctx, cancel := context.WithTimeout(s.pollCtx, s.pollingInterval-time.Second)
 	defer cancel()
 
@@ -329,15 +312,9 @@ func (s *ParserServiceImpl) scanBlockRange() {
 
 	logger.Info("Starting scan block range iteration.")
 
-	currentParsedBlock, err := s.initializeStateIfRequired(ctx)
-	if err != nil {
-		logger.Error("Failed to initialize state or get current block", "error", err)
-		return
-	}
+	logger = logger.With("currentBlockToScanFrom", currentBlockFromState.Value())
 
-	logger = logger.With("currentParsedBlockFromState", currentParsedBlock.Value())
-
-	start, end, scanNeeded, err := s.getScanRange(ctx, currentParsedBlock)
+	start, end, scanNeeded, err := s.getScanRange(ctx, currentBlockFromState)
 	if err != nil {
 		logger.Error("Failed to determine scan range", "error", err)
 		return
@@ -365,7 +342,7 @@ func (s *ParserServiceImpl) scanBlockRange() {
 		logger.Info("No addresses are currently subscribed for monitoring. Skipping transaction processing until subscribed.")
 	}
 
-	lastSuccessfullyProcessedBlock := currentParsedBlock.Value()
+	lastSuccessfullyProcessedBlock := currentBlockFromState.Value()
 
 	for i := start; i <= end; i++ {
 		select {

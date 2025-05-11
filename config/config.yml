@@ -15,7 +15,3 @@ eth_client:
 
 app_service: # Configuration for the core application (parser) service
   polling_interval_seconds: 10       # Interval in seconds for polling new blocks from the Ethereum node
-  initial_scan_from_block: -1        # Block number to start scanning from. 
-                                     # -1: From latest known block in DB, or latest network block if DB is empty.
-                                     #  0: From genesis block (block 0).
-                                     # >0: From a specific block number.

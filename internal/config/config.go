@@ -29,7 +29,6 @@ func LoadConfig(filePath string) (*Config, error) {
 		},
 		AppService: ApplicationServiceConfig{
 			PollingIntervalSeconds: DefaultAppServicePollingIntervalSeconds,
-			InitialScanBlockNumber: DefaultAppServiceInitialScanBlockNumber,
 		},
 	}
 
