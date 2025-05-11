@@ -51,7 +51,6 @@ func run(cfg *config.Config, logger applogger.AppLogger) error {
 	baseCtx := context.Background()
 	ctx, stop := signal.NotifyContext(baseCtx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
 	httpClient := &http.Client{Timeout: time.Duration(cfg.ETHClient.ClientTimeoutSeconds) * time.Second}
 
 	ethNodeClient := rpc.NewEthereumNodeAdapter(cfg.ETHClient.NodeURL, httpClient)
@@ -92,61 +91,83 @@ func gracefulShutdown(
 	g.Go(func() error {
 		logger.Info("Starting parser service background process...")
 		if errSvcStart := parserService.Start(gCtx); errSvcStart != nil {
-			if errors.Is(errSvcStart, context.Canceled) || errors.Is(errSvcStart, context.DeadlineExceeded) {
-				logger.Info("Parser service start context cancelled.")
-				return nil
-			}
-			logger.Error("Parser service Start() failed", "error", errSvcStart)
-			return fmt.Errorf("parser service failed: %w", errSvcStart)
+			logger.Error("Parser service Start() call returned an error", "error", errSvcStart)
+			return fmt.Errorf("parser service Start() failed: %w", errSvcStart)
 		}
-		logger.Info("Parser service Start process finished (likely due to context cancellation).")
+		<-gCtx.Done()
+		logger.Info("Parser service Start goroutine: context cancelled. Waiting for parser to stop...")
 		return nil
 	})
 
 	g.Go(func() error {
-		logger.Info("Starting API server (already logged endpoints in run func)...")
-		if errServ := apiServer.Start(); errServ != nil {
-			if errors.Is(errServ, http.ErrServerClosed) {
-				logger.Info("API server closed.")
+		logger.Info("Starting API server...")
+		serverErrChan := make(chan error, 1)
+		go func() {
+			logger.Info("API server ListenAndServe starting...")
+			if errServ := apiServer.Start(); errServ != nil && !errors.Is(errServ, http.ErrServerClosed) {
+				serverErrChan <- fmt.Errorf("http server critical error: %w", errServ)
+			} else {
+				close(serverErrChan)
+			}
+		}()
+
+		select {
+		case <-gCtx.Done():
+			logger.Info("API server: context cancelled, initiating shutdown...")
+			shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancelShutdown()
+			if err := apiServer.Shutdown(shutdownCtx); err != nil {
+				logger.Error("API server graceful shutdown error", "error", err)
+				return fmt.Errorf("api server shutdown failed: %w", err)
+			}
+			logger.Info("API server shut down gracefully due to context cancellation.")
+			if errFromStart, ok := <-serverErrChan; ok && errFromStart != nil {
+				logger.Error("API server Start() returned an unexpected error", "error", errFromStart)
+				return errFromStart
+			}
+			return nil
+		case err, ok := <-serverErrChan:
+			if !ok {
+				logger.Info("API server Start() goroutine completed (channel closed).")
 				return nil
 			}
-			logger.Error("API server ListenAndServe error", "error", errServ)
-			return fmt.Errorf("http server critical error: %w", errServ)
+			logger.Error("API server ListenAndServe failed", "error", err)
+			return err
 		}
-		logger.Info("API server Start process finished (likely due to http.ErrServerClosed or other termination).")
-		return nil
 	})
 
 	logger.Info("Application services started via errgroup. Waiting for OS signal or critical error...")
 
-	serverErr := g.Wait()
+	waitErr := g.Wait()
 
-	if serverErr != nil {
-		logger.Error("A service failed or OS signal received, initiating shutdown...", "cause_error", serverErr)
+	if waitErr != nil {
+		if errors.Is(waitErr, context.Canceled) {
+			logger.Info("Errgroup context cancelled (likely SIGINT/SIGTERM), proceeding with final cleanup.")
+		} else {
+			logger.Error("A service within errgroup failed", "error", waitErr)
+		}
 	} else {
-		logger.Info("OS signal received or services completed, initiating graceful shutdown...")
+		logger.Info("All services in errgroup completed without error.")
 	}
 
-	logger.Info("Attempting to stop parser service...")
+	logger.Info("Attempting to stop parser service (post g.Wait)...")
 	parserShutdownCtx, cancelParserShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelParserShutdown()
 	if err := parserService.Stop(parserShutdownCtx); err != nil {
-		logger.Error("Parser service graceful shutdown error", "error", err)
+		logger.Error("Parser service graceful shutdown error (post g.Wait)", "error", err)
+		if !errors.Is(waitErr, context.Canceled) {
+			if waitErr == nil {
+				waitErr = fmt.Errorf("parser service stop failed: %w", err)
+			} else {
+				waitErr = fmt.Errorf("parser service stop failed (%w) after initial error (%w)", err, waitErr)
+			}
+		}
 	} else {
-		logger.Info("Parser service stopped successfully.")
+		logger.Info("Parser service stopped successfully (post g.Wait).")
 	}
 
-	logger.Info("Attempting to stop API server...")
-	httpShutdownCtx, cancelHTTPShutdown := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancelHTTPShutdown()
-	if err := apiServer.Shutdown(httpShutdownCtx); err != nil {
-		logger.Error("HTTP server graceful shutdown error", "error", err)
-	} else {
-		logger.Info("HTTP server stopped successfully.")
-	}
-
-	if errors.Is(serverErr, context.Canceled) {
+	if errors.Is(waitErr, context.Canceled) {
 		return nil
 	}
-	return serverErr
+	return waitErr
 }

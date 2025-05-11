@@ -26,18 +26,12 @@ type ParserServiceImpl struct {
 	pollingInterval time.Duration
 	lastKnownBlock  domain.BlockNumber
 
-	pollCtx    context.Context
-	pollCancel context.CancelFunc
-	stopChan   chan struct{}
+	pollCtx  context.Context // This context will be derived from the one passed to Start
+	stopChan chan struct{}
 }
 
 // Compile-time check to ensure ParserServiceImpl implements ethparser.Parser
 var _ ethparser.Parser = (*ParserServiceImpl)(nil)
-
-// Config holds configuration needed by the ParserService.
-type Config struct {
-	PollingIntervalSeconds int
-}
 
 // NewParserService creates a new instance of ParserServiceImpl.
 func NewParserService(
@@ -47,7 +41,7 @@ func NewParserService(
 	ethClient client.EthereumClient,
 	appLogger logger.AppLogger,
 	appCfg config.ApplicationServiceConfig,
-) (ethparser.Parser, error) {
+) (*ParserServiceImpl, error) {
 	// Check for nil dependencies individually, starting with logger.
 	if appLogger == nil {
 		// Cannot log if logger itself is nil, so just return error.
@@ -75,10 +69,10 @@ func NewParserService(
 		addressRepo:     addressRepo,
 		txRepo:          txRepo,
 		ethClient:       ethClient,
+		logger:          appLogger,
 		pollingInterval: time.Duration(appCfg.PollingIntervalSeconds) * time.Second,
 	}
 
-	// Simplified logic: always start from the latest network block.
 	sInstance.logger.Info("Attempting to fetch latest block from network to determine starting point...")
 	latestNetBlock, errNet := sInstance.ethClient.GetLatestBlockNumber(context.Background())
 	if errNet != nil {
@@ -89,7 +83,7 @@ func NewParserService(
 		sInstance.logger.Info("Starting scan from latest network block", "blockNumber", sInstance.lastKnownBlock.Value())
 	}
 
-	ctxForInitialSet := context.Background() // Use a new context for this operation
+	ctxForInitialSet := context.Background()
 	if errSet := sInstance.stateRepo.SetCurrentBlock(ctxForInitialSet, sInstance.lastKnownBlock); errSet != nil {
 		sInstance.logger.Error("Failed to set initial parser state in repository", "error", errSet, "blockNumber", sInstance.lastKnownBlock.Value())
 	} else {
@@ -163,65 +157,87 @@ func mapDomainToAPITransaction(domainTx domain.Transaction) ethparser.Transactio
 }
 
 // Start initiates the background blockchain polling process.
-func (s *ParserServiceImpl) Start(_ context.Context) (err error) {
-	if s.pollCancel != nil {
-		if s.pollCtx.Err() == nil {
-			s.logger.Info("Parser service is already running.")
-			return fmt.Errorf("service already running")
-		}
+func (s *ParserServiceImpl) Start(ctx context.Context) (err error) {
+	if s.pollCtx != nil && s.pollCtx.Err() == nil {
+		s.logger.Info("Parser service is already running or was not properly stopped.")
+		return fmt.Errorf("service already running or not properly stopped")
 	}
 
-	s.pollCtx, s.pollCancel = context.WithCancel(context.Background())
+	s.pollCtx = ctx // Use the context passed from the caller (e.g., errgroup)
 	s.stopChan = make(chan struct{})
 
-	go s.pollBlocks()
+	go s.pollBlocks() // pollBlocks will use s.pollCtx
 	s.logger.Info("Parser service started polling...")
 	return nil
 }
 
 // Stop signals the background polling process to shut down gracefully and waits for it to complete.
 func (s *ParserServiceImpl) Stop(ctx context.Context) (err error) {
-	if s.pollCancel == nil || s.pollCtx.Err() != nil {
-		s.logger.Info("Parser service is not running or already stopped.")
+	// Check if the service was started and pollCtx is not nil
+	if s.pollCtx == nil {
+		s.logger.Info("Parser service was not started or already stopped.")
 		return nil
 	}
 
-	s.logger.Info("Stopping parser service...")
-	s.pollCancel()
+	// Check if the polling context is already done (e.g. by errgroup cancellation)
+	if s.pollCtx.Err() != nil {
+		s.logger.Info("Parser service polling context already done.")
+		// If stopChan is not nil, it means pollBlocks was started.
+		// We should still wait for it to signal completion if it hasn't already.
+		if s.stopChan != nil {
+			s.logger.Info("Waiting for pollBlocks to confirm stop due to already done context...")
+			select {
+			case <-s.stopChan:
+				s.logger.Info("pollBlocks confirmed stop.")
+			case <-ctx.Done(): // Timeout for this Stop operation
+				s.logger.Error("Parser service stop timed out while waiting for pollBlocks confirmation.", "error", ctx.Err())
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
 
+	s.logger.Info("Stopping parser service (external Stop call)...")
+	// Explicitly calling pollCancel is no longer needed here as we don't create a local cancel func for s.pollCtx.
+	// The cancellation of s.pollCtx is managed by the caller of Start (e.g. errgroup).
+	// This Stop method now primarily serves to wait for the pollBlocks goroutine to finish.
+
+	// Wait for the pollBlocks goroutine to finish, which is signaled by closing s.stopChan.
+	// Use the context passed to Stop for timeout.
 	select {
 	case <-s.stopChan:
-		s.logger.Info("Parser service stopped gracefully.")
+		s.logger.Info("Parser service stopped gracefully (via external Stop call).")
 		return nil
 	case <-ctx.Done():
-		s.logger.Error("Parser service stop timed out.", "error", ctx.Err())
+		s.logger.Error("Parser service stop timed out (via external Stop call).", "error", ctx.Err())
 		return ctx.Err()
 	}
 }
 
 // pollBlocks is the main background loop for scanning the blockchain.
 func (s *ParserServiceImpl) pollBlocks() {
-	defer close(s.stopChan)
+	defer close(s.stopChan) // Signal completion when this goroutine exits
 	ticker := time.NewTicker(s.pollingInterval)
 	defer ticker.Stop()
 
 	s.logger.Info("Polling loop started.")
 
-	// Initial scan on startup, using the already initialized s.lastKnownBlock from NewParserService.
-	// s.lastKnownBlock is now set directly in NewParserService and reflects the latest network block (or 0).
-	s.scanBlockRange(s.lastKnownBlock) // Pass s.lastKnownBlock directly
+	s.scanBlockRange(s.lastKnownBlock)
 
 	for {
 		select {
 		case <-ticker.C:
-			// Subsequent scans will use the updated s.lastKnownBlock from stateRepo after each successful scanBlockRange
-			currentBlockFromState, err := s.stateRepo.GetCurrentBlock(s.pollCtx) // Use s.pollCtx here
+			currentBlockFromState, err := s.stateRepo.GetCurrentBlock(s.pollCtx)
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					s.logger.Info("Polling loop: context cancelled while getting current block from state.", "error", err)
+					return // Exit if context is cancelled
+				}
 				s.logger.Error("Failed to get current block from state before polling tick scan", "error", err)
-				continue // Skip this tick if we can't get state
+				continue
 			}
 			s.scanBlockRange(currentBlockFromState)
-		case <-s.pollCtx.Done():
+		case <-s.pollCtx.Done(): // Listen to the context passed in Start
 			s.logger.Info("Polling loop stopping due to context cancellation.")
 			return
 		}
@@ -230,12 +246,16 @@ func (s *ParserServiceImpl) pollBlocks() {
 
 // getScanRange determines the block range to scan in the current iteration.
 func (s *ParserServiceImpl) getScanRange(
-	ctx context.Context,
+	ctx context.Context, // This context should be s.pollCtx or a derivative for timeout
 	currentParsedBlock domain.BlockNumber,
 ) (start, end int64, scanNeeded bool, err error) {
 	logger := s.logger.With("currentParsedBlock", currentParsedBlock.Value())
-	latestBlock, fetchErr := s.ethClient.GetLatestBlockNumber(ctx)
+	latestBlock, fetchErr := s.ethClient.GetLatestBlockNumber(ctx) // Use the passed context
 	if fetchErr != nil {
+		if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
+			logger.Info("Context cancelled while fetching latest block number in getScanRange.", "error", fetchErr)
+			return 0, 0, false, fetchErr
+		}
 		logger.Error("Error getting latest block number", "error", fetchErr)
 		return 0, 0, false, fmt.Errorf("error getting latest block number: %w", fetchErr)
 	}
@@ -243,7 +263,7 @@ func (s *ParserServiceImpl) getScanRange(
 	start = currentParsedBlock.Value() + 1
 	end = latestBlock.Value()
 
-	if end > latestBlock.Value() { // This check is redundant as end is already latestBlock.Value()
+	if end > latestBlock.Value() {
 		end = latestBlock.Value()
 	}
 
@@ -257,15 +277,19 @@ func (s *ParserServiceImpl) getScanRange(
 
 // processBlock fetches a single block, finds relevant transactions based on monitored addresses,
 func (s *ParserServiceImpl) processBlock(
-	ctx context.Context,
+	ctx context.Context, // This context should be s.pollCtx or a derivative for timeout
 	blockNum domain.BlockNumber,
 	monitoredAddresses map[string]struct{},
 ) error {
 	logger := s.logger.With("blockNumber", blockNum.Value())
 	logger.Debug("Processing block")
 
-	block, err := s.ethClient.GetBlockWithTransactions(ctx, blockNum)
+	block, err := s.ethClient.GetBlockWithTransactions(ctx, blockNum) // Use the passed context
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			logger.Info("Context cancelled while getting block with transactions.", "error", err)
+			return err
+		}
 		logger.Error("Failed to get block with transactions", "error", err)
 		return fmt.Errorf("failed to get block %d: %w", blockNum.Value(), err)
 	}
@@ -278,6 +302,14 @@ func (s *ParserServiceImpl) processBlock(
 	logger = logger.With("blockHash", block.Hash.String(), "txCount", len(block.Transactions))
 	foundTxs := 0
 	for _, tx := range block.Transactions {
+		// Check for context cancellation before processing each transaction
+		select {
+		case <-ctx.Done():
+			logger.Info("Context cancelled during transaction processing loop.", "error", ctx.Err())
+			return ctx.Err()
+		default:
+		}
+
 		storeTx := false
 		if _, ok := monitoredAddresses[tx.From.String()]; ok {
 			storeTx = true
@@ -289,7 +321,11 @@ func (s *ParserServiceImpl) processBlock(
 		}
 
 		if storeTx {
-			if err := s.txRepo.Store(ctx, tx); err != nil {
+			if err := s.txRepo.Store(ctx, tx); err != nil { // Use the passed context
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					logger.Info("Context cancelled while storing transaction.", "error", err)
+					return err
+				}
 				logger.Error("Failed to store transaction", "txHash", tx.Hash.String(), "error", err)
 			} else {
 				foundTxs++
@@ -304,9 +340,12 @@ func (s *ParserServiceImpl) processBlock(
 }
 
 // scanBlockRange performs a single scan iteration.
-func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNumber) { // Accepts current block as parameter
-	ctx, cancel := context.WithTimeout(s.pollCtx, s.pollingInterval-time.Second)
-	defer cancel()
+func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNumber) {
+	// Create a new context for this specific scanBlockRange execution, derived from s.pollCtx
+	// This allows scanBlockRange to have its own timeout or cancellation without affecting the main pollCtx immediately.
+	// However, if s.pollCtx is cancelled, this derived context will also be cancelled.
+	scanCtx, cancelScan := context.WithTimeout(s.pollCtx, s.pollingInterval-time.Second) // Or just use s.pollCtx if timeout per scan isn't needed
+	defer cancelScan()
 
 	logger := s.logger.With("method", "scanBlockRange")
 
@@ -314,9 +353,11 @@ func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNum
 
 	logger = logger.With("currentBlockToScanFrom", currentBlockFromState.Value())
 
-	start, end, scanNeeded, err := s.getScanRange(ctx, currentBlockFromState)
+	start, end, scanNeeded, err := s.getScanRange(scanCtx, currentBlockFromState) // Pass scanCtx
 	if err != nil {
-		logger.Error("Failed to determine scan range", "error", err)
+		if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			logger.Error("Failed to determine scan range", "error", err)
+		} // If context cancelled, it's already logged in getScanRange or will be handled by pollBlocks exit
 		return
 	}
 
@@ -327,9 +368,11 @@ func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNum
 
 	logger.Info("Scanning blocks", "from", start, "to", end)
 
-	monitoredAddressList, err := s.addressRepo.FindAll(ctx)
+	monitoredAddressList, err := s.addressRepo.FindAll(scanCtx) // Pass scanCtx
 	if err != nil {
-		logger.Error("Failed to get monitored addresses", "error", err)
+		if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			logger.Error("Failed to get monitored addresses", "error", err)
+		}
 		return
 	}
 
@@ -346,11 +389,12 @@ func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNum
 
 	for i := start; i <= end; i++ {
 		select {
-		case <-ctx.Done():
+		case <-scanCtx.Done(): // Listen to scanCtx.Done()
 			logger.Warn("Scan block range context done during block processing loop",
 				"lastProcessed", lastSuccessfullyProcessedBlock,
-				"error", ctx.Err())
+				"error", scanCtx.Err())
 			finalBlockNum, _ := domain.NewBlockNumber(lastSuccessfullyProcessedBlock)
+			// Use s.pollCtx for state update as this is a critical final step not tied to scanCtx timeout
 			if updateErr := s.stateRepo.SetCurrentBlock(s.pollCtx, finalBlockNum); updateErr != nil {
 				logger.Error("Failed to update current block state on scan interruption",
 					"blockNumber", lastSuccessfullyProcessedBlock,
@@ -359,9 +403,12 @@ func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNum
 			return
 		default:
 			blockNumToProcess, _ := domain.NewBlockNumber(i)
-			if err := s.processBlock(ctx, blockNumToProcess, monitoredAddressesMap); err != nil {
-				logger.Error("Failed to process block, stopping current scan iteration", "blockNumber", i, "error", err)
+			if err := s.processBlock(scanCtx, blockNumToProcess, monitoredAddressesMap); err != nil { // Pass scanCtx
+				if !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+					logger.Error("Failed to process block, stopping current scan iteration", "blockNumber", i, "error", err)
+				}
 				finalBlockNum, _ := domain.NewBlockNumber(lastSuccessfullyProcessedBlock)
+				// Use s.pollCtx for state update
 				if updateErr := s.stateRepo.SetCurrentBlock(s.pollCtx, finalBlockNum); updateErr != nil {
 					logger.Error("Failed to update current block state after processing error",
 						"blockNumber", lastSuccessfullyProcessedBlock,
@@ -374,6 +421,7 @@ func (s *ParserServiceImpl) scanBlockRange(currentBlockFromState domain.BlockNum
 	}
 
 	finalBlockNum, _ := domain.NewBlockNumber(lastSuccessfullyProcessedBlock)
+	// Use s.pollCtx for state update
 	if err := s.stateRepo.SetCurrentBlock(s.pollCtx, finalBlockNum); err != nil {
 		logger.Error("Failed to update current block state after scan range completion",
 			"blockNumber", lastSuccessfullyProcessedBlock,

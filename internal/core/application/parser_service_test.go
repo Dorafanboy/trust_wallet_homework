@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"trust_wallet_homework/internal/config"
 	"trust_wallet_homework/internal/core/application"
 	"trust_wallet_homework/internal/core/application/mocks/mock_client"
 	"trust_wallet_homework/internal/core/application/mocks/mock_repository"
@@ -103,9 +104,8 @@ func setupBasicService(t *testing.T) (
 	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	testAppLogger := applogger.NewSlogAdapter(discardLogger)
 
-	cfg := application.Config{
+	cfg := config.ApplicationServiceConfig{
 		PollingIntervalSeconds: 1,
-		InitialScanBlockNumber: 0,
 	}
 
 	service, err := application.NewParserService(
